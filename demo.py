@@ -85,13 +85,16 @@ def main(data_path, front_img, back_img, model='smpl'):
         pgn_path = None
         
     # step.1: produce single frame texture      
-    textured_smplx.get_texture_SMPL(f_img, f_obj, f_pkl, npath, 'front', template_obj) 
-    textured_smplx.get_texture_SMPL(b_img, b_obj, b_pkl, npath, 'back', template_obj)   
+    textured_smplx.get_texture_SMPL(f_img, f_obj, f_pkl, npath, 'front', template_obj, False) 
+    textured_smplx.get_texture_SMPL(b_img, b_obj, b_pkl, npath, 'back', template_obj, False)   
     
     # step.2: produce PGN texture (optional)
     
-    textured_smplx.get_texture_SMPL(f_pgn, f_obj, f_pkl, npath, 'front_PGN', template_obj)
-    textured_smplx.get_texture_SMPL(b_pgn, b_obj, b_pkl, npath, 'back_PGN', template_obj)
+    textured_smplx.get_texture_SMPL(f_pgn, f_obj, f_pkl, npath, 'front', template_obj, True)
+    textured_smplx.get_texture_SMPL(b_pgn, b_obj, b_pkl, npath, 'back', template_obj, True)
+
+    textured_smplx.extract_body(npath, 'front')
+    textured_smplx.extract_body(npath, 'back')
     
     # step3: combine all the textures
     
@@ -99,15 +102,15 @@ def main(data_path, front_img, back_img, model='smpl'):
     
     # step4: complete all the textures
     
-    f_acc_texture = os.path.join(npath, 'back_texture_acc.png')
-    f_acc_vis = os.path.join(npath, 'back_texture_vis_acc.png')
+    f_acc_texture = os.path.join(npath, 'combined_texture.png')
+    f_acc_vis = os.path.join(npath, 'combined_visible.png')
     f_mask = template_mask
     
     textured_smplx.complete_texture(f_acc_texture, f_acc_vis, f_mask)
     
     # finish: copy the result
     
-    shutil.copyfile(f_acc_texture[:-4]+'complete.png',
+    shutil.copyfile(f_acc_texture[:-20]+'completed_texture.png',
                     os.path.join(data_path, 'texture_%s.png'%model)) 
     
     

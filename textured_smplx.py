@@ -15,7 +15,7 @@ import utils
 from utils import obj_vv,obj_vt,obj_fv,obj_ft,fv2norm,cv2_triangle
 
       
-def get_texture_SMPL(fname_img, fname_obj, fname_pkl, npath, obj_name, template_obj):
+def get_texture_SMPL(fname_img, fname_obj, fname_pkl, npath, obj_name, template_obj, is_mask):
     ''' 
         fname_img: the image file
         fname_obj: the .obj file that smplify-x produced
@@ -167,59 +167,51 @@ def get_texture_SMPL(fname_img, fname_obj, fname_pkl, npath, obj_name, template_
                     texture[y,x]=img[v, u]
                 except:
                     pass
-    cv2.imwrite(os.path.join(npath, '%s_texture.png'%obj_name), texture) 
-    cv2.imwrite(os.path.join(npath, '%s_norm_texture.png'%obj_name), norm_texture) 
-    cv2.imwrite(os.path.join(npath, '%s_norm_photo.png'%obj_name), norm_photo) 
+    if not is_mask:
+        cv2.imwrite(os.path.join(npath, '%s_raw_texture.png'%obj_name), texture)
+    else:
+        cv2.imwrite(os.path.join(npath, '%s_mask.png'%obj_name), texture)
         
+    
+def extract_body(npath, obj_name):
+    raw_texture = cv2.imread(os.path.join(npath, '%s_raw_texture.png'%obj_name))
+    mask = cv2.imread(os.path.join(npath, '%s_mask.png'%obj_name))
+    # 
+    red_mask = np.all(mask == [0, 0, 255], axis=2)
+    green_mask = np.all(mask == [0, 255, 0], axis=2)
+    blue_mask = np.all(mask == [255, 0, 0], axis=2)
+    # 
+    intm_texture = raw_texture.copy()
+    intm_texture[red_mask] = [100, 100, 100]
+    cv2.imwrite(os.path.join(npath, '%s_intm_texture.png'%obj_name), intm_texture)
+    # 
+    intm_visible = mask.copy()
+    intm_visible[(green_mask|blue_mask)] = [255, 255, 255]
+    intm_visible[~(green_mask|blue_mask)] = [0, 0, 0]
+    cv2.imwrite(os.path.join(npath, '%s_intm_visible.png'%obj_name), intm_visible)
+    # 
+    texture = raw_texture.copy()
+    texture[(red_mask|blue_mask)] = [100, 100, 100]
+    cv2.imwrite(os.path.join(npath, '%s_texture.png'%obj_name), texture)
+    # 
+    visible = mask.copy()
+    visible[green_mask] = [255, 255, 255]
+    visible[~green_mask] = [0, 0, 0]
+    cv2.imwrite(os.path.join(npath, '%s_visible.png'%obj_name), visible)
     
     
 def combine_texture_SMPL(inPath, frames=None):
-    if frames is None:
-        frames = []
-        if os.path.isfile(os.path.join(inPath, 'front_texture.png')):
-            frames.append('front')
-        if os.path.isfile(os.path.join(inPath, 'back_texture.png')):
-            frames.append('back')
-    print('selected frames:', frames)
-        
-    frame = frames[0]
-    f_vis = os.path.join(inPath, "%s_norm_texture.png"%frame)
-    f_texture = os.path.join(inPath, "%s_texture.png"%frame)
-    
-    f_pgn = f_vis.replace('_norm_texture.png','_PGN_texture.png') # optional
-    
-    all_vis = cv2.imread(f_vis)
-    all_vis = cv2.cvtColor(all_vis, cv2.COLOR_BGR2GRAY) > 200
-    if os.path.isfile(f_pgn):
-        pgn = cv2.imread(f_pgn)
-        pgn = pgn.astype(int).sum(-1) > 0
-        for i in range(4):
-            pgn = scipy.ndimage.binary_erosion(pgn)
-        all_vis[pgn==0]=0
-
-    all_texture = cv2.imread(f_texture)
-    for frame in frames[1:]:
-        f_vis = os.path.join(inPath, "%s_norm_texture.png"%frame)
-        f_texture = os.path.join(inPath, "%s_texture.png"%frame)
-        f_acc_texture = os.path.join(inPath, "%s_texture_acc.png"%frame)
-        f_acc_vis = os.path.join(inPath, "%s_texture_vis_acc.png"%frame)
-        vis = cv2.imread(f_vis)
-        vis = cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY) > 200        
-            
-        f_pgn = f_vis.replace('_norm_texture.png','_PGN_texture.png') # optional
-        if os.path.isfile(f_pgn):
-            pgn = cv2.imread(f_pgn)
-            pgn = pgn.astype(int).sum(-1) > 0
-            for i in range(4):
-                pgn = scipy.ndimage.binary_erosion(pgn)
-            vis[pgn==0]=0 
-            
-        texture = cv2.imread(f_texture)
-        select = (~all_vis)&vis
-        all_texture[select] = texture[select]
-        all_vis[select]=True
-        cv2.imwrite(f_acc_texture, all_texture)
-        cv2.imwrite(f_acc_vis, all_vis.astype(np.uint8)*255)
+    front_texture = cv2.imread(os.path.join(inPath, 'front_texture.png'))
+    front_visible = cv2.imread(os.path.join(inPath, 'front_visible.png'))
+    back_texture = cv2.imread(os.path.join(inPath, 'back_texture.png'))
+    back_visible = cv2.imread(os.path.join(inPath, 'back_visible.png'))
+    combined_texture = front_texture
+    combined_visible = front_visible
+    selected = np.all(front_visible == [0, 0, 0], axis=2) & np.all(back_visible == [255, 255, 255], axis=2)
+    combined_texture[selected] = back_texture[selected]
+    combined_visible[selected] = [255, 255, 255]
+    cv2.imwrite(os.path.join(inPath, 'combined_texture.png'), combined_texture)
+    cv2.imwrite(os.path.join(inPath, 'combined_visible.png'), combined_visible)
         
         
 def complete_texture(f_texture, f_vis, f_mask):
@@ -264,4 +256,4 @@ def complete_texture(f_texture, f_vis, f_mask):
                         to_visit.add((nx,ny))
                     texture_sum[nx][ny]+=texture[x][y]
                     texture_count[nx][ny][0]+=1
-    cv2.imwrite(f_texture[:-4]+'complete.png', texture)
+    cv2.imwrite(f_texture[:-20]+'completed_texture.png', texture)
