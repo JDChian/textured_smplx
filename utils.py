@@ -55,7 +55,7 @@ def obj_vv(fname): # read vertices: (x,y,z)
                 v = [float(i) for i in tmp[1:4]]
                 res.append(v)
                 
-    return np.array(res, dtype=np.float)
+    return np.array(res, dtype=float)
     
 def obj_vt(fname): # read texture coordinates: (u,v)
     res = []
@@ -65,7 +65,7 @@ def obj_vt(fname): # read texture coordinates: (u,v)
                 tmp = line.split(' ')
                 v = [float(i) for i in tmp[1:3]]
                 res.append(v)
-    return np.array(res, dtype=np.float)
+    return np.array(res, dtype=float)
 
 def obj_fv(fname): # read vertices id in faces: (vv1,vv2,vv3)
     res = []
@@ -78,7 +78,7 @@ def obj_fv(fname): # read vertices id in faces: (vv1,vv2,vv3)
                 else:
                     v = [int(i) for i in tmp[1:4]]
                 res.append(v)
-    return np.array(res, dtype=np.int) - 1 # obj index from 1
+    return np.array(res, dtype=int) - 1 # obj index from 1
 
 def obj_ft(fname): # read texture id in faces: (vt1,vt2,vt3)
     res = []
@@ -91,7 +91,7 @@ def obj_ft(fname): # read texture id in faces: (vt1,vt2,vt3)
                 else:
                     raise(Exception("not a textured obj file"))
                 res.append(v)
-    return np.array(res, dtype=np.int) - 1 # obj index from 1
+    return np.array(res, dtype=int) - 1 # obj index from 1
 
 
 def fv2norm(fv, vv):
