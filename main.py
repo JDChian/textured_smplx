@@ -1,13 +1,8 @@
 import os
 import cv2
 import numpy as np
-import scipy
 import pickle
-import shutil
-import scipy.special
-import trimesh
 import argparse
-import collections
 
 
 SIZE = 1000
@@ -304,13 +299,12 @@ def extract_body(
 
 
 def blending(
-        texture_paths, visible_paths, weight_paths, template_texture_path,
+        texture_paths, weight_paths, template_texture_path,
         blended_texture_path, blended_visible_path,
         blending_method
     ):
 
     textures = np.array([cv2.imread(texture_path) for texture_path in texture_paths])
-    visibles = np.array([cv2.imread(visible_path, cv2.IMREAD_GRAYSCALE) for visible_path in visible_paths])
     weights = np.array([cv2.imread(weight_path, cv2.IMREAD_GRAYSCALE) for weight_path in weight_paths])
     template_texture = cv2.imread(template_texture_path)
 
@@ -322,42 +316,40 @@ def blending(
 
     if blending_method == "priority":
 
-        for texture, visible in reversed(list(zip(textures, visibles))):
-            white_mask = (visible == 255)
-            blended_texture[white_mask] = texture[white_mask]
+        for texture, weight in reversed(list(zip(textures, weights))):
+            nonzero_mask = (weight > 0)
+            blended_texture[nonzero_mask] = texture[nonzero_mask]
     
     elif blending_method == "average":
 
-        Sum = np.zeros((SIZE, SIZE, 3), dtype=np.uint16)
-        Num = np.zeros((SIZE, SIZE), dtype=np.uint8)
-        for texture, visible in zip(textures, visibles):
-            white_mask = (visible == 255)
-            Sum[white_mask] += texture[white_mask]
-            Num[white_mask] += 1
-        zero_mask = (Num == 0)
-        Num[zero_mask] = 1
-        blended_texture[~zero_mask] = (Sum / Num[:, :, np.newaxis])[~zero_mask]
+        weights_ = weights.copy()
+        
+        nonzero_mask = (weights > 0)
+        weights[nonzero_mask] = 1
+
+        sum_weights = np.sum(weights, axis=0)
+        zero_mask = (sum_weights == 0)
+        nonzero_mask = (sum_weights > 0)
+        sum_weights[zero_mask] = 1
+        normalized_weights = weights / sum_weights
+        
+        weighted_textures = textures * normalized_weights[:, :, :, np.newaxis]
+        sum_weighted_texture = np.sum(weighted_textures, axis=0)
+        blended_texture[nonzero_mask] = sum_weighted_texture[nonzero_mask]
+
+        weights = weights_
 
     elif blending_method == "DINAR":
 
         sum_weights = np.sum(weights, axis=0)
         zero_mask = (sum_weights == 0)
+        nonzero_mask = (sum_weights > 0)
         sum_weights[zero_mask] = 1
         normalized_weights = weights / sum_weights
         
         weighted_textures = textures * normalized_weights[:, :, :, np.newaxis]
-        DINAR_texture = np.sum(weighted_textures, axis=0)
-        
-        blended_visible = np.max(visibles, axis=0)
-        white_mask = (blended_visible == 255)
-        blended_texture[white_mask] = DINAR_texture[white_mask]
-
-        # tmp_dir = os.path.join(os.path.dirname(blended_texture_path), "tmp")
-        # os.makedirs(tmp_dir, exist_ok=True)
-        # for i, (normalized_weight, weighted_texture) in enumerate(zip(normalized_weights, weighted_textures)):
-        #     cv2.imwrite(os.path.join(tmp_dir, f"normalized_weight_{i+1}.png"), normalized_weight)
-        #     cv2.imwrite(os.path.join(tmp_dir, f"weighted_texture_{i+1}.png"), weighted_texture)
-        # cv2.imwrite(os.path.join(tmp_dir, f"DINAR_texture.png"), DINAR_texture)
+        sum_weighted_texture = np.sum(weighted_textures, axis=0)
+        blended_texture[nonzero_mask] = sum_weighted_texture[nonzero_mask]
         
     cv2.imwrite(blended_texture_path, blended_texture)
 
@@ -365,7 +357,11 @@ def blending(
     blended visible
     """
 
-    blended_visible = np.max(visibles, axis=0)
+    blended_visible = np.zeros((SIZE, SIZE), dtype=np.uint8)
+    
+    sum_weights = np.sum(weights, axis=0)
+    nonzero_mask = (sum_weights > 0)
+    blended_visible[nonzero_mask] = 255
     
     cv2.imwrite(blended_visible_path, blended_visible)
 
@@ -375,45 +371,32 @@ def inpainting(
         inpainted_texture_path
     ):
 
-    texture = cv2.imread(blended_texture_path)
-    vis = cv2.imread(blended_visible_path)[:, :, 0]
-    mask = cv2.imread(template_texture_path)[:, :, 0]
-    labels, num_label = scipy.ndimage.label(mask)    
-    texture_sum = np.zeros(texture.shape, float)
-    texture_count = np.zeros((texture.shape[0], texture.shape[1], 1), int)
-    h, w = vis.shape
-    dxdy = ((1, 0), (-1, 0), (0, 1), (0, -1))
-    dxdy = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1))
-    for label in range(1, num_label):
-        # print('completing label:', label)
-        queue = collections.deque()
-        to_visit = set()
-        for x, y in zip(*np.where(labels==label)):
-            if not vis[x][y]:
-                continue
-            border = 0
-            for dx, dy in dxdy:
-                nx, ny = x + dx, y + dy
-                if nx >= 0 and nx < h and ny >= 0 and ny < w and vis[nx][ny] == 0 and labels[nx][ny] == label:
-                    border += 1
-            if border:
-                queue.append((x, y))
-                texture_sum[x][y] = texture[x][y]
-                texture_count[x][y][0] = 1
-        while(queue):
-            x, y = queue.popleft()
-            texture[x][y] = (texture_sum[x][y] / texture_count[x][y]).astype(np.uint8)
-            vis[nx][ny] = 255
-            for dx, dy in dxdy:
-                nx, ny = x + dx, y + dy
-                if nx >= 0 and nx < h and ny >= 0 and ny < w and vis[nx][ny] == 0 and labels[nx][ny] == label:
-                    if (nx, ny) not in to_visit:
-                        queue.append((nx, ny))
-                        to_visit.add((nx, ny))
-                    texture_sum[nx][ny] += texture[x][y]
-                    texture_count[nx][ny][0] += 1
-    
-    cv2.imwrite(inpainted_texture_path, texture)
+    blended_texture = cv2.imread(blended_texture_path)
+    blended_visible = cv2.imread(blended_visible_path)
+    template_texture = cv2.imread(template_texture_path)
+
+    directions = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)]
+    inpainted_texture = blended_texture.copy()
+    to_inpaint = np.all(blended_visible == BLACK, axis=2) & np.all(template_texture == GRAY, axis=2)
+    while np.any(to_inpaint):
+        new_inpainted_texture = inpainted_texture.copy()
+        new_to_inpaint = to_inpaint.copy()
+        for i in range(SIZE):
+            for j in range(SIZE):
+                if to_inpaint[i, j]:
+                    neighbors = []
+                    for di, dj in directions:
+                        ni, nj = i + di, j + dj
+                        if 0 <= ni < SIZE and 0 <= nj < SIZE and not to_inpaint[ni][nj] and np.any(template_texture[ni][nj] == GRAY):
+                            neighbors.append((ni, nj))
+                    neighbors = np.array(neighbors)
+                    if neighbors.size > 0:
+                        new_inpainted_texture[i, j] = np.mean(inpainted_texture[neighbors[:, 0], neighbors[:, 1]], axis=0)
+                        new_to_inpaint[i, j] = False
+        inpainted_texture = new_inpainted_texture
+        to_inpaint = new_to_inpaint
+
+    cv2.imwrite(inpainted_texture_path, inpainted_texture)
 
 
 # ====================================================================================================
@@ -426,8 +409,9 @@ def main():
     parser.add_argument("--model_type", type=str)
     args = parser.parse_args()
 
-    filenames = os.listdir(os.path.join(args.object_folder, "images"))  # ["test1.jpg", "test2.jpg"]
-    image_ids = [filename.split(".")[0] for filename in filenames]      # ["test1", "test2"]
+    filenames = os.listdir(os.path.join(args.object_folder, "images"))                          # ["test1.jpg", "test10.jpg", "test2.jpg"]
+    filenames.sort(key=lambda filename: int(filename.replace("test", "").replace(".jpg", "")))  # ["test1.jpg", "test2.jpg", "test10.jpg"]
+    image_ids = [filename.split(".")[0] for filename in filenames]                              # ["test1", "test2", "test10"]
 
     save_dir = os.path.join(args.object_folder, f"texture_{args.model_type}")
     save_subdirs = []
@@ -462,20 +446,22 @@ def main():
         print(f"Start processing {filename}")
 
         # algorithm
-        warping(
-            image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
-            all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
-        )
-        extract_body(
-            image_texture_path, mask_texture_path, normal_texture_path,
-            texture_path, visible_path, weight_path
-        )
+        # warping(
+        #     image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
+        #     all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
+        # )
+        # extract_body(
+        #     image_texture_path, mask_texture_path, normal_texture_path,
+        #     texture_path, visible_path, weight_path
+        # )
     
     for blending_method in ["priority", "average", "DINAR"]:
+
+        if blending_method != "DINAR":
+            continue
     
         # input path
         texture_paths = [os.path.join(save_subdir, "texture.png") for save_subdir in save_subdirs]
-        visible_paths = [os.path.join(save_subdir, "visible.png") for save_subdir in save_subdirs]
         weight_paths = [os.path.join(save_subdir, "weight.png") for save_subdir in save_subdirs]
         template_texture_path = os.path.join("template", f"template_texture_{args.model_type}_{SIZE}.png")
 
@@ -485,9 +471,8 @@ def main():
         inpainted_texture_path = os.path.join(save_dir, f"inpainted_texture_({blending_method}_blending).png")
 
         # select textures for blending
-        selection = [1, 2, 5, 6]
+        selection = [1, 9, 2, 16, 6, 12]
         texture_paths = [texture_paths[i - 1] for i in selection]
-        visible_paths = [visible_paths[i - 1] for i in selection]
         weight_paths = [weight_paths[i - 1] for i in selection]
 
         # print information
@@ -495,7 +480,7 @@ def main():
         
         # algorithm
         blending(
-            texture_paths, visible_paths, weight_paths, template_texture_path,
+            texture_paths, weight_paths, template_texture_path,
             blended_texture_path, blended_visible_path,
             blending_method
         )
@@ -506,6 +491,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # python main.py --object_folder data/obj2 --model_type smpl
-    # python main.py --object_folder data/obj2 --model_type smplx
+    # python main.py --object_folder data/obj4 --model_type smpl
+    # python main.py --object_folder data/obj4 --model_type smplx
     main()
