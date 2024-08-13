@@ -446,20 +446,17 @@ def main():
         print(f"Start processing {filename}")
 
         # algorithm
-        # warping(
-        #     image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
-        #     all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
-        # )
-        # extract_body(
-        #     image_texture_path, mask_texture_path, normal_texture_path,
-        #     texture_path, visible_path, weight_path
-        # )
+        warping(
+            image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
+            all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
+        )
+        extract_body(
+            image_texture_path, mask_texture_path, normal_texture_path,
+            texture_path, visible_path, weight_path
+        )
     
     for blending_method in ["priority", "average", "DINAR"]:
 
-        if blending_method != "DINAR":
-            continue
-    
         # input path
         texture_paths = [os.path.join(save_subdir, "texture.png") for save_subdir in save_subdirs]
         weight_paths = [os.path.join(save_subdir, "weight.png") for save_subdir in save_subdirs]
