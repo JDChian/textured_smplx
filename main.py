@@ -98,9 +98,6 @@ def compute_fn(v, fv):
     return fn
 
 
-# ====================================================================================================
-
-
 def warping(
         image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
         all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
@@ -455,7 +452,7 @@ def refining(
     inpainted_texture = cv2.imread(inpainted_texture_path)
     template_texture = cv2.imread(template_texture_path)
 
-    #
+    # body_part_texture
 
     label, num_features = scipy.ndimage.label(template_texture[:, :, 0])
     if model_type == "smpl":
@@ -475,7 +472,7 @@ def refining(
         body_part_texture_path = os.path.join(body_part_textures_dir, f"{body_part_name}.jpg")
         cv2.imwrite(body_part_texture_path, body_part_texture)
     
-    #
+    # segmented_body_part_texture
     
     segmented_body_part_names = ["left_leg", "right_leg", "left_arm", "right_arm"]
     segmented_body_part_results = [segment(body_part_textures[index], body_part_masks[index])
@@ -489,7 +486,7 @@ def refining(
         segmented_body_part_texture_path = os.path.join(segmented_body_part_textures_dir, f"{segmented_body_part_name}.jpg")
         cv2.imwrite(segmented_body_part_texture_path, segmented_body_part_texture)
     
-    #
+    # clustered_body_part_texture
 
     clustered_body_part_names = segmented_body_part_names
     clustered_body_part_textures = [cluster(segmented_body_part_texture, segmented_body_part_label, features_mean)
@@ -502,7 +499,7 @@ def refining(
         clustered_body_part_texture_path = os.path.join(clustered_body_part_textures_dir, f"{clustered_body_part_name}.jpg")
         cv2.imwrite(clustered_body_part_texture_path, clustered_body_part_texture)
 
-    #
+    # refined_texture
 
     refined_texture = inpainted_texture.copy()
 
