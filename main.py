@@ -458,8 +458,13 @@ def refining(
     #
 
     label, num_features = scipy.ndimage.label(template_texture[:, :, 0])
-    body_part_names = ["left_leg", "head", "right_leg", "left_arm", "right_arm",
-                        "torso", "left_foot", "right_foot", "left_hand", "right_hand"]
+    if model_type == "smpl":
+        body_part_names = ["left_leg", "head", "right_leg", "left_arm", "right_arm",
+                           "torso", "left_foot", "right_foot", "left_hand", "right_hand"]
+    else:
+        body_part_names = ["1", "2", "left_leg", "3", "4",
+                           "right_leg", "head", "5", "left_arm", "right_arm",
+                           "torso", "left_foot", "right_foot", "left_hand", "right_hand"]
     body_part_masks = [label == feature for feature in range(1, num_features + 1)]
     body_part_textures = [np.where(body_part_mask[:, :, np.newaxis], inpainted_texture, BLACK).astype(np.uint8)
                           for body_part_mask in body_part_masks]
@@ -501,15 +506,22 @@ def refining(
 
     refined_texture = inpainted_texture.copy()
 
-    indices = [2, 2, 1, 1]
-    
-    left_leg_mask = np.all(clustered_body_part_textures[0] == features_means[0][indices[0]], axis=2)
-    left_arm_mask = np.all(clustered_body_part_textures[2] == features_means[2][indices[2]], axis=2)
-    left_hand_mask = body_part_masks[8]
-
-    right_leg_mask = np.all(clustered_body_part_textures[1] == features_means[1][indices[1]], axis=2)
-    right_arm_mask = np.all(clustered_body_part_textures[3] == features_means[3][indices[3]], axis=2)
-    right_hand_mask = body_part_masks[9]
+    if model_type == "smpl":
+        indices = [2, 2, 1, 1]
+        left_leg_mask = np.all(clustered_body_part_textures[0] == features_means[0][indices[0]], axis=2)
+        left_arm_mask = np.all(clustered_body_part_textures[2] == features_means[2][indices[2]], axis=2)
+        left_hand_mask = body_part_masks[8]
+        right_leg_mask = np.all(clustered_body_part_textures[1] == features_means[1][indices[1]], axis=2)
+        right_arm_mask = np.all(clustered_body_part_textures[3] == features_means[3][indices[3]], axis=2)
+        right_hand_mask = body_part_masks[9]
+    else:
+        indices = [1, 2, 1, 1]
+        left_leg_mask = np.all(clustered_body_part_textures[0] == features_means[0][indices[0]], axis=2)
+        left_arm_mask = np.all(clustered_body_part_textures[2] == features_means[2][indices[2]], axis=2)
+        left_hand_mask = body_part_masks[13]
+        right_leg_mask = np.all(clustered_body_part_textures[1] == features_means[1][indices[1]], axis=2)
+        right_arm_mask = np.all(clustered_body_part_textures[3] == features_means[3][indices[3]], axis=2)
+        right_hand_mask = body_part_masks[14]
 
     legs_mask = left_leg_mask | right_leg_mask
     refined_texture[legs_mask] = np.mean(refined_texture[legs_mask], axis=0)
@@ -566,14 +578,14 @@ def main():
         print(f"Start processing {filename}")
 
         # algorithm
-        # warping(
-        #     image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
-        #     all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
-        # )
-        # extract_body(
-        #     image_texture_path, mask_texture_path, normal_texture_path,
-        #     texture_path, visible_path, weight_path
-        # )
+        warping(
+            image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
+            all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
+        )
+        extract_body(
+            image_texture_path, mask_texture_path, normal_texture_path,
+            texture_path, visible_path, weight_path
+        )
     
     for blending_method in ["priority", "average", "DINAR"]:
 
@@ -597,15 +609,15 @@ def main():
         print(f"Start {blending_method} blending")
         
         # algorithm
-        # blending(
-        #     texture_paths, weight_paths, template_texture_path,
-        #     blended_texture_path, blended_visible_path,
-        #     blending_method
-        # )
-        # inpainting(
-        #     blended_texture_path, blended_visible_path, template_texture_path,
-        #     inpainted_texture_path
-        # )
+        blending(
+            texture_paths, weight_paths, template_texture_path,
+            blended_texture_path, blended_visible_path,
+            blending_method
+        )
+        inpainting(
+            blended_texture_path, blended_visible_path, template_texture_path,
+            inpainted_texture_path
+        )
         refining(
             inpainted_texture_path, template_texture_path,
             refined_texture_path,
