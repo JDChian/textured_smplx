@@ -1,8 +1,10 @@
 import os
 import cv2
 import numpy as np
+import scipy
 import pickle
 import argparse
+from sklearn.mixture import GaussianMixture
 
 
 SIZE = 1000
@@ -272,6 +274,9 @@ def warping(
     cv2.imwrite(normal_texture_path, normal_texture)
 
 
+# ====================================================================================================
+
+
 def extract_body(
         image_texture_path, mask_texture_path, normal_texture_path,
         texture_path, visible_path, weight_path
@@ -296,6 +301,9 @@ def extract_body(
     weight = normal_texture.copy()
     weight[(red_mask|blue_mask)] = 0
     cv2.imwrite(weight_path, weight)
+
+
+# ====================================================================================================
 
 
 def blending(
@@ -366,6 +374,9 @@ def blending(
     cv2.imwrite(blended_visible_path, blended_visible)
 
 
+# ====================================================================================================
+
+
 def inpainting(
         blended_texture_path, blended_visible_path, template_texture_path,
         inpainted_texture_path
@@ -397,6 +408,115 @@ def inpainting(
         to_inpaint = new_to_inpaint
 
     cv2.imwrite(inpainted_texture_path, inpainted_texture)
+
+
+# ====================================================================================================
+
+
+def segment(image, mask, num_features=2):
+    pixels_value = image[mask]
+    gm = GaussianMixture(n_components=num_features, random_state=0).fit(pixels_value)
+    pixels_feature = gm.predict(pixels_value)
+    features_mean = gm.means_.astype(np.uint8)
+    #
+    label = np.zeros(image.shape[:2], dtype=np.uint8)
+    label[mask] = pixels_feature + 1
+    #
+    segmented_image = np.zeros(image.shape, dtype=np.uint8)
+    segmented_image[mask] = features_mean[pixels_feature]
+    #
+    return segmented_image, label, np.vstack([BLACK, features_mean])
+
+
+def cluster(segmented_image, label, features_mean):
+    clustered_image = segmented_image.copy()
+    #
+    feature_region = (label == 1).astype(np.uint8)
+    num_components, components = cv2.connectedComponents(feature_region, connectivity=8)
+    size = [np.sum(components == component_id) for component_id in range(num_components)]
+    largest_component_id = np.argmax(size[1:]) + 1
+    clustered_image[(components != 0) & (components != largest_component_id)] = features_mean[2]
+    #
+    feature_region = (label == 2).astype(np.uint8)
+    num_components, components = cv2.connectedComponents(feature_region, connectivity=8)
+    size = [np.sum(components == component_id) for component_id in range(num_components)]
+    largest_component_id = np.argmax(size[1:]) + 1
+    clustered_image[(components != 0) & (components != largest_component_id)] = features_mean[1]
+    #
+    return clustered_image
+
+
+def refining(
+        inpainted_texture_path, template_texture_path,
+        refined_texture_path,
+        model_type
+    ):
+
+    inpainted_texture = cv2.imread(inpainted_texture_path)
+    template_texture = cv2.imread(template_texture_path)
+
+    #
+
+    label, num_features = scipy.ndimage.label(template_texture[:, :, 0])
+    body_part_names = ["left_leg", "head", "right_leg", "left_arm", "right_arm",
+                        "torso", "left_foot", "right_foot", "left_hand", "right_hand"]
+    body_part_masks = [label == feature for feature in range(1, num_features + 1)]
+    body_part_textures = [np.where(body_part_mask[:, :, np.newaxis], inpainted_texture, BLACK).astype(np.uint8)
+                          for body_part_mask in body_part_masks]
+    
+    body_part_textures_dir = os.path.join("refining", model_type, "body_part_textures")
+    os.makedirs(body_part_textures_dir, exist_ok=True)
+    for body_part_name, body_part_texture in zip(body_part_names, body_part_textures):
+        body_part_texture_path = os.path.join(body_part_textures_dir, f"{body_part_name}.jpg")
+        cv2.imwrite(body_part_texture_path, body_part_texture)
+    
+    #
+    
+    segmented_body_part_names = ["left_leg", "right_leg", "left_arm", "right_arm"]
+    segmented_body_part_results = [segment(body_part_textures[index], body_part_masks[index])
+                                   for index, body_part_name in enumerate(body_part_names)
+                                   if body_part_name in segmented_body_part_names]
+    segmented_body_part_textures, segmented_body_part_labels, features_means = zip(*segmented_body_part_results)
+    
+    segmented_body_part_textures_dir = os.path.join("refining", model_type, "segmented_body_part_textures")
+    os.makedirs(segmented_body_part_textures_dir, exist_ok=True)
+    for segmented_body_part_name, segmented_body_part_texture in zip(segmented_body_part_names, segmented_body_part_textures):
+        segmented_body_part_texture_path = os.path.join(segmented_body_part_textures_dir, f"{segmented_body_part_name}.jpg")
+        cv2.imwrite(segmented_body_part_texture_path, segmented_body_part_texture)
+    
+    #
+
+    clustered_body_part_names = segmented_body_part_names
+    clustered_body_part_textures = [cluster(segmented_body_part_texture, segmented_body_part_label, features_mean)
+                                    for segmented_body_part_texture, segmented_body_part_label, features_mean
+                                    in zip(segmented_body_part_textures, segmented_body_part_labels, features_means)]
+
+    clustered_body_part_textures_dir = os.path.join("refining", model_type, "clustered_body_part_textures")
+    os.makedirs(clustered_body_part_textures_dir, exist_ok=True)
+    for clustered_body_part_name, clustered_body_part_texture in zip(clustered_body_part_names, clustered_body_part_textures):
+        clustered_body_part_texture_path = os.path.join(clustered_body_part_textures_dir, f"{clustered_body_part_name}.jpg")
+        cv2.imwrite(clustered_body_part_texture_path, clustered_body_part_texture)
+
+    #
+
+    refined_texture = inpainted_texture.copy()
+
+    indices = [2, 2, 1, 1]
+    
+    left_leg_mask = np.all(clustered_body_part_textures[0] == features_means[0][indices[0]], axis=2)
+    left_arm_mask = np.all(clustered_body_part_textures[2] == features_means[2][indices[2]], axis=2)
+    left_hand_mask = body_part_masks[8]
+
+    right_leg_mask = np.all(clustered_body_part_textures[1] == features_means[1][indices[1]], axis=2)
+    right_arm_mask = np.all(clustered_body_part_textures[3] == features_means[3][indices[3]], axis=2)
+    right_hand_mask = body_part_masks[9]
+
+    legs_mask = left_leg_mask | right_leg_mask
+    refined_texture[legs_mask] = np.mean(refined_texture[legs_mask], axis=0)
+    arms_mask = left_arm_mask | left_hand_mask | right_arm_mask | right_hand_mask
+    refined_texture[arms_mask] = np.mean(refined_texture[arms_mask], axis=0)
+
+    cv2.imwrite(refined_texture_path, refined_texture)
 
 
 # ====================================================================================================
@@ -446,14 +566,14 @@ def main():
         print(f"Start processing {filename}")
 
         # algorithm
-        warping(
-            image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
-            all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
-        )
-        extract_body(
-            image_texture_path, mask_texture_path, normal_texture_path,
-            texture_path, visible_path, weight_path
-        )
+        # warping(
+        #     image_path, mask_path, model_path, template_model_path, parameter_path, template_texture_path,
+        #     all_faces_on_image_path, all_faces_on_texture_path, front_faces_on_image_path, front_faces_on_texture_path, image_texture_path, mask_texture_path, normal_texture_path
+        # )
+        # extract_body(
+        #     image_texture_path, mask_texture_path, normal_texture_path,
+        #     texture_path, visible_path, weight_path
+        # )
     
     for blending_method in ["priority", "average", "DINAR"]:
 
@@ -466,6 +586,7 @@ def main():
         blended_texture_path = os.path.join(save_dir, f"blended_texture_({blending_method}_blending).png")
         blended_visible_path = os.path.join(save_dir, "blended_visible.png")
         inpainted_texture_path = os.path.join(save_dir, f"inpainted_texture_({blending_method}_blending).png")
+        refined_texture_path = os.path.join(save_dir, f"refined_texture_({blending_method}_blending).png")
 
         # select textures for blending
         selection = [1, 9, 2, 16, 6, 12]
@@ -476,18 +597,28 @@ def main():
         print(f"Start {blending_method} blending")
         
         # algorithm
-        blending(
-            texture_paths, weight_paths, template_texture_path,
-            blended_texture_path, blended_visible_path,
-            blending_method
-        )
-        inpainting(
-            blended_texture_path, blended_visible_path, template_texture_path,
-            inpainted_texture_path
+        # blending(
+        #     texture_paths, weight_paths, template_texture_path,
+        #     blended_texture_path, blended_visible_path,
+        #     blending_method
+        # )
+        # inpainting(
+        #     blended_texture_path, blended_visible_path, template_texture_path,
+        #     inpainted_texture_path
+        # )
+        refining(
+            inpainted_texture_path, template_texture_path,
+            refined_texture_path,
+            args.model_type
         )
 
 
 if __name__ == "__main__":
     # python main.py --object_folder data/obj4 --model_type smpl
     # python main.py --object_folder data/obj4 --model_type smplx
+    """
+    Other arguments:
+    1. selection
+    2. indices
+    """
     main()
